@@ -1,0 +1,166 @@
+/*
+ * lab8_main.c: Starter code for ECE 266 Lab 8, main.c, spring 2024
+ * Note: In this semester, a small part of starter code is provided
+ * (none was provided before).
+ *
+ * Lab 8: Distance Measurement
+ *
+ * Created by Zhao Zhang
+ * Last update: 3/14/2024
+ */
+
+#include <stdint.h>
+#include <stdbool.h>
+#include <math.h>
+#include "launchpad.h"
+#include "seg7.h"
+#include "ranger.h"
+
+/*
+ * Global variables
+ */
+Seg7Display seg7 = { { 10, 10, 10, 10 }, false /* colon on */};
+
+// System state
+typedef struct {
+    enum {Millimeter, Inch} display_mode;       // display inch or millimeter
+} SysState;
+
+// The events
+Event trigger_ranger_reading_event;
+Event check_push_button_event;
+Event clock_update_event;
+
+SysState sys = {Millimeter};
+
+/*******************************************
+ * Task 1: Trigger and read the ranger
+ ******************************************/
+
+// Trigger the ranger reading every 0.5 seconds
+void TriggerRangerReading(Event *event)
+{
+    RangerTriggerReading();
+    uint32_t width = RangerGetData();
+    uprintf("Sensor reading: %u \r\n", (uint32_t)width);
+    uint32_t distance;
+    if (sys.display_mode == Inch){
+        seg7.colon_on = true;
+        distance = width * 12 / 89657;
+        uint32_t feet = distance / 12;
+        uint32_t inches = distance % 12;
+        if (feet >= 10) {
+            seg7.digit[3] = feet / 10;
+            seg7.digit[2] = feet % 10;
+        }
+        else if (feet > 0) {
+            seg7.digit[3] = 11;
+            seg7.digit[2] = feet;
+        }
+        else if (feet == 0) {
+            seg7.digit[3] = 11;
+            seg7.digit[2] = 11;
+        }
+
+        // Set inches
+        if (inches < 10 && feet != 0) {
+            seg7.digit[1] = 0;
+        }
+        else{
+            seg7.digit[1] = inches / 10;
+        }
+        if ((inches < 10) && (feet == 0)){
+            seg7.digit[1] = 11;
+        }
+        seg7.digit[0] = inches % 10;
+    }
+    else{
+        distance = width * 304.8 / 89657;
+        seg7.colon_on = false;
+        seg7.digit[3] = distance / 1000 % 10;
+        seg7.digit[2] = distance / 100 % 10;
+        seg7.digit[1] = distance / 10 % 10;
+        seg7.digit[0] = distance % 10;
+        if (distance >= 9999){
+            seg7.digit[3] = 9;
+            seg7.digit[2] = 9;
+            seg7.digit[1] = 9;
+            seg7.digit[0] = 9;
+        }
+        else if(distance < 10){
+            seg7.digit[3] = 11;
+            seg7.digit[2] = 11;
+            seg7.digit[1] = 11;
+            seg7.digit[0] = distance % 10;
+        }
+        else if(distance < 100){
+            seg7.digit[3] = 11;
+            seg7.digit[2] = 11;
+            seg7.digit[1] = distance / 10 % 10;
+            seg7.digit[0] = distance % 10;
+        }
+        else if(distance < 1000){
+            seg7.digit[3] = 11;
+            seg7.digit[2] = distance / 100 % 10;
+            seg7.digit[1] = distance / 10 % 10;
+            seg7.digit[0] = distance % 10;
+        }
+    }
+
+
+
+    Seg7Update(&seg7);
+
+    EventSchedule(event, event->time + 500);
+}
+void CheckPushButton(Event *event)
+{
+    // Process the pushbutton input
+    int input = PushButtonRead();
+    switch (PushButtonRead())
+    {
+    case 1:
+        sys.display_mode = Inch;
+        break;
+
+    case 2:
+        sys.display_mode = Millimeter;
+        break;
+    }
+}
+
+
+/*******************************************
+ * The main function
+ ******************************************/
+void main(void)
+{
+    // Initialize the LaunchPad and peripherals
+    LaunchPadInit();
+    RangerInit();
+    Seg7Init();
+
+    // Initialize the events
+    EventInit(&trigger_ranger_reading_event, TriggerRangerReading);
+    RangerEventRegister(&trigger_ranger_reading_event);
+    EventInit(&check_push_button_event, CheckPushButton);
+
+
+    // Schedule time event
+    EventSchedule(&trigger_ranger_reading_event, 100);
+
+    // Register push_button_event with push button ISR
+    PushButtonEventRegister(&check_push_button_event);
+
+    // Print out a message. See uprintf() in launchpad.h
+    uprintf("%s\n\r", "Lab 8: Distance Measurement");
+    // Loop forever
+    while (true)
+    {
+        // Wait for interrupt
+        asm("   wfi");
+
+        // Execute scheduled callbacks
+        EventExecute();
+    }
+}
